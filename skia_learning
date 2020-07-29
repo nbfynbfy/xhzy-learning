@@ -1,0 +1,171 @@
+#include <iostream>
+
+#include <GLFW/glfw3.h>
+#include <mac/include/effects/SkGradientShader.h>
+#include "SkBitmap.h"
+#include "SkPaint.h"
+#include "SkCanvas.h"
+#include "SkRect.h"
+#include "SkTypes.h"
+
+#pragma comment(lib, "glfw3.lib")
+
+//窗口大小变化时，重新设置视口
+void framebuff_size_callback(GLFWwindow* window, int width, int height) {
+    glViewport(0, 0, width, height);
+}
+
+//处理输入
+void process_input_callabck(GLFWwindow *window, int key, int scancode, int action, int mods) {
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, true);
+    }
+}
+#include "SkImageEncoder.h"
+#include "GrContext.h"
+#include "gpu/gl/GrGLInterface.h"
+#include "GrBackendSurface.h"
+#include "SkSurface.h"
+#include "glog/logging.h"
+
+sk_sp<SkSurface>  sk_surface_ = nullptr;        //
+SkCanvas*         sk_canvas_ = nullptr;         // 视频画布
+
+bool MakeSkGPUCanvas(int w, int h, unsigned int fbo, SkCanvas*& sk_canvas) {
+    auto interface = GrGLMakeNativeInterface();
+    LOG(INFO) << "GrGLMakeNativeInterface 2 interface=" << interface << " fbo=" << fbo;
+
+    sk_sp<GrContext> gr_context(GrContext::MakeGL(interface));
+
+    GrGLFramebufferInfo info;
+    info.fFBOID = fbo;
+    info.fFormat = 0x8058;
+    static const int kMsaaSampleCount = 0; //4;
+    static const int kStencilBits = 0;  // Skia needs 8 stencil bits
+    GrBackendRenderTarget target(w, h, kMsaaSampleCount, kStencilBits, info);
+
+    SkSurfaceProps props(SkSurfaceProps::kLegacyFontHost_InitType);
+
+    sk_surface_ = sk_sp<SkSurface>(SkSurface::MakeFromBackendRenderTarget(gr_context.get(),
+                                                                          target,
+                                                                          kBottomLeft_GrSurfaceOrigin,
+                                                                          kRGBA_8888_SkColorType,
+                                                                          SkColorSpace::MakeSRGB(),
+                                                                          &props));
+
+    sk_canvas = sk_surface_->getCanvas();
+    if (nullptr == sk_canvas) {
+        LOG(ERROR) << "getCanvas failed";
+        return false;
+    }
+    LOG(INFO) << "gpu sk_canvas_=" << sk_canvas;
+
+//    sk_surface_preprocess_ = CreateSnapshotSurface(gr_context.get(), SkISize::Make(w, h));
+//    LOG(INFO) << "sk_surface_preprocess_=" << sk_surface_preprocess_;
+//    sk_canvas_preprocess_ = sk_surface_preprocess_->getCanvas();
+//    LOG(INFO) << "sk_canvas_preprocess_=" << sk_canvas_preprocess_;
+//    SkMatrix matrix;
+//    matrix.setAll(1, 0, 0, 0, -1, h, 0, 0, 1);
+//    sk_canvas_preprocess_->concat(matrix);
+    return true;
+}
+
+int main() {
+
+    glfwInit();		//初始化GLFW
+
+    //指明OpenGL版本
+    //glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    //glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    //glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    //创建窗口
+    GLFWwindow* window = glfwCreateWindow(800, 600, "OpenGLTest1", NULL, NULL);
+    if (window == NULL) {
+        std::cout << "Failed to create GLFW window " << std::endl;
+        //销毁所有窗口
+        glfwTerminate();
+        return -1;
+    }
+    //将该窗口作为当前线程的主上下文
+    glfwMakeContextCurrent(window);
+
+    //处理输入
+    glfwSetKeyCallback(window, process_input_callabck);
+
+    //设置视口Viewport
+    //前两个参数控制渲染窗口左下角的相对位置，第三和第四个参数控制渲染窗口的宽度和高度
+    //OpenGL会在此窗口大小范围内进行坐标变换
+
+    //监听窗口大小变化
+    glfwSetFramebufferSizeCallback(window, framebuff_size_callback);
+    glViewport(0, 0, 800, 600);
+    MakeSkGPUCanvas(800, 600, 0, sk_canvas_);
+
+    int ttl = 0;
+
+    //循环渲染，在退出前一直不断地绘制图像
+    while (!glfwWindowShouldClose(window)) {
+        sk_canvas_->clear(SK_ColorGREEN);
+        //清屏
+//        glClear(GL_COLOR_BUFFER_BIT);
+//        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+
+        sleep(1);
+        ttl++;
+
+        SkBitmap bitmap;
+        bitmap.allocN32Pixels(600,600);
+        SkCanvas* canvas = new SkCanvas(bitmap);
+
+        SkRect rect {0,0,600,600};
+        SkPaint paint;
+        paint.setStyle(SkPaint::kFill_Style);
+        paint.setColor(SK_ColorRED);
+
+        canvas->drawRect(rect,paint);
+
+        SkPaint src;
+
+        SkPoint srcPoints[2] = {
+                SkPoint::Make(0, 0),
+                SkPoint::Make(0, 600)
+        };
+        // 定义三色混合时，每种颜色的offset
+        SkScalar offset[2] = { 0, 1.0};
+
+        // 定义用于混色的三种颜色
+        SkColor srcColors[3] = {SkColorSetARGB(255, 0, 0, 0),
+                                 SkColorSetARGB(0, 0, 0, 0)};
+
+        // 设置linearGradient
+        src.setShader(SkGradientShader::MakeLinear(
+                srcPoints, srcColors, offset, 2,
+                SkShader::kClamp_TileMode, 0, nullptr));
+
+        // new一个View实例，Graphics绘制绘制矩形
+
+
+//        if (ttl % 3 == 0) {
+//            sk_canvas_1->drawColor(SK_ColorRED);
+//        } else if (ttl % 3 == 1) {
+//            sk_canvas_1->drawColor(SK_ColorGREEN);
+//        } else if (ttl % 3 == 2) {
+//            sk_canvas_1->drawColor(SK_ColorBLUE);
+//        }
+
+        //将存储在缓冲区中的像素颜色进行绘制，这里涉及到双缓冲的问题
+        sk_canvas_->drawBitmap(bitmap,0,0);
+        sk_canvas_->drawRect(rect,src);
+
+        glfwMakeContextCurrent(window);
+        sk_canvas_->flush();
+        glfwSwapBuffers(window);
+        //检查有没有触发什么事件（键盘输入、鼠标移动等)、窗口改变
+        glfwPollEvents();
+    }
+
+    // 退出前清理
+    glfwTerminate();
+    return 0;
+}
